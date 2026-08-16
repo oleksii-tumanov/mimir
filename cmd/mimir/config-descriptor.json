@@ -14640,7 +14640,7 @@
               "kind": "field",
               "name": "lanes",
               "required": false,
-              "desc": "Lanes to request for each worker goroutine. Each entry is a '+'-separated list of job types in priority order.",
+              "desc": "Lanes to request for each worker goroutine. Each entry is a '+'-separated list of job types in priority order. Valid job types: plan, compact, compact-fast, compact-slow. The compact-fast and compact-slow types only differ from compact when the scheduler separates compaction lanes by class.",
               "fieldValue": null,
               "fieldDefaultValue": "compact+plan,plan",
               "fieldFlag": "compactor.scheduler-client.lanes",
@@ -14856,12 +14856,44 @@
               "kind": "field",
               "name": "policy",
               "required": false,
-              "desc": "The lane policy the compactor scheduler should use. Valid values: simple",
+              "desc": "The lane policy the compactor scheduler should use. Valid values: simple, compaction-class",
               "fieldValue": null,
               "fieldDefaultValue": "simple",
               "fieldFlag": "compactor-scheduler.lane-policy.policy",
               "fieldType": "string",
               "fieldCategory": "experimental"
+            },
+            {
+              "kind": "block",
+              "name": "compaction_class",
+              "required": false,
+              "desc": "",
+              "blockEntries": [
+                {
+                  "kind": "field",
+                  "name": "fast_max_duration",
+                  "required": false,
+                  "desc": "Compaction jobs whose source blocks span at most this duration are classified as fast. Jobs spanning longer are classified as slow.",
+                  "fieldValue": null,
+                  "fieldDefaultValue": 7200000000000,
+                  "fieldFlag": "compactor-scheduler.lane-policy.compaction-class.fast-max-duration",
+                  "fieldType": "duration",
+                  "fieldCategory": "experimental"
+                },
+                {
+                  "kind": "field",
+                  "name": "out_of_order_class_fast",
+                  "required": false,
+                  "desc": "Classify out-of-order compaction jobs as fast regardless of the duration they span. Disable if out-of-order jobs for a tenant grow large enough to dominate the fast class.",
+                  "fieldValue": null,
+                  "fieldDefaultValue": true,
+                  "fieldFlag": "compactor-scheduler.lane-policy.compaction-class.out-of-order-class-fast",
+                  "fieldType": "boolean",
+                  "fieldCategory": "experimental"
+                }
+              ],
+              "fieldValue": null,
+              "fieldDefaultValue": null
             }
           ],
           "fieldValue": null,

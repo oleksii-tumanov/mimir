@@ -175,6 +175,143 @@ func TestScheduler_RepeatedJobFailures(t *testing.T) {
 	})
 }
 
+func TestScheduler_IncompleteBytesByLane(t *testing.T) {
+	const hour = int64(time.Hour / time.Millisecond)
+
+	bkt := objstore.NewInMemBucket()
+	require.NoError(t, bkt.Upload(context.Background(), "tenant1/placeholder", strings.NewReader("")))
+
+	cfg := newTestSchedulerConfig()
+	cfg.LanePolicy.Policy = lanePolicyCompactionClass
+	scheduler, reg := newTestScheduler(t, bkt, cfg)
+	ctx := context.Background()
+
+	scheduler.rotator.Maintenance(ctx, false, true)
+	leaseResp, err := scheduler.LeaseJob(ctx, &compactorschedulerpb.LeaseJobRequest{WorkerId: "worker1"})
+	require.NoError(t, err)
+	require.NotNil(t, leaseResp.Key)
+
+	_, err = scheduler.PlannedJobs(ctx, &compactorschedulerpb.PlannedJobsRequest{
+		Key:    leaseResp.Key,
+		Tenant: leaseResp.Spec.Tenant,
+		Jobs: []*compactorschedulerpb.PlannedCompactionJob{
+			{Id: "fresh-2h", Job: &compactorschedulerpb.CompactionJob{
+				BlockIds: [][]byte{[]byte("block-a")}, TotalBlocksBytes: 100, MinTime: 0, MaxTime: 2 * hour,
+			}},
+			{Id: "periodic-24h", Job: &compactorschedulerpb.CompactionJob{
+				BlockIds: [][]byte{[]byte("block-b")}, TotalBlocksBytes: 900, MinTime: 0, MaxTime: 24 * hour,
+			}},
+			{Id: "out-of-order-24h", Job: &compactorschedulerpb.CompactionJob{
+				BlockIds: [][]byte{[]byte("block-c")}, TotalBlocksBytes: 50, MinTime: 0, MaxTime: 24 * hour, OutOfOrder: true,
+			}},
+		},
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, prom_testutil.GatherAndCompare(reg, strings.NewReader(`
+		# HELP cortex_compactor_scheduler_incomplete_compaction_jobs_bytes The total bytes of blocks in compaction jobs that have not yet completed (pending or active).
+		# TYPE cortex_compactor_scheduler_incomplete_compaction_jobs_bytes gauge
+		cortex_compactor_scheduler_incomplete_compaction_jobs_bytes{compaction_type="merge",lane="fast-compaction"} 150
+		cortex_compactor_scheduler_incomplete_compaction_jobs_bytes{compaction_type="merge",lane="slow-compaction"} 900
+		cortex_compactor_scheduler_incomplete_compaction_jobs_bytes{compaction_type="split",lane="fast-compaction"} 0
+		cortex_compactor_scheduler_incomplete_compaction_jobs_bytes{compaction_type="split",lane="slow-compaction"} 0
+	`), "cortex_compactor_scheduler_incomplete_compaction_jobs_bytes"))
+}
+
+func TestScheduler_CompactionClassLanes(t *testing.T) {
+	const hour = int64(time.Hour / time.Millisecond)
+
+	bkt := objstore.NewInMemBucket()
+	require.NoError(t, bkt.Upload(context.Background(), "tenant1/placeholder", strings.NewReader("")))
+
+	cfg := newTestSchedulerConfig()
+	cfg.LanePolicy.Policy = lanePolicyCompactionClass
+	scheduler, _ := newTestScheduler(t, bkt, cfg)
+	ctx := context.Background()
+
+	scheduler.rotator.Maintenance(ctx, false, true)
+	leaseResp, err := scheduler.LeaseJob(ctx, &compactorschedulerpb.LeaseJobRequest{WorkerId: "worker1"})
+	require.NoError(t, err)
+	require.NotNil(t, leaseResp.Key)
+
+	// Offered slow first, so passing requires lane ordering rather than FIFO.
+	_, err = scheduler.PlannedJobs(ctx, &compactorschedulerpb.PlannedJobsRequest{
+		Key:    leaseResp.Key,
+		Tenant: leaseResp.Spec.Tenant,
+		Jobs: []*compactorschedulerpb.PlannedCompactionJob{
+			{Id: "periodic-24h", Job: &compactorschedulerpb.CompactionJob{
+				BlockIds: [][]byte{[]byte("block-slow")}, TotalBlocksBytes: 900, MinTime: 0, MaxTime: 24 * hour,
+			}},
+			{Id: "fresh-2h", Job: &compactorschedulerpb.CompactionJob{
+				BlockIds: [][]byte{[]byte("block-fast")}, TotalBlocksBytes: 100, MinTime: 0, MaxTime: 2 * hour,
+			}},
+		},
+	})
+	require.NoError(t, err)
+
+	leaseIDs := func() []string {
+		var ids []string
+		for {
+			resp, err := scheduler.LeaseJob(ctx, &compactorschedulerpb.LeaseJobRequest{WorkerId: "worker1"})
+			require.NoError(t, err)
+			if resp.Key == nil {
+				return ids
+			}
+			ids = append(ids, resp.Key.Id)
+		}
+	}
+	require.Equal(t, []string{"fresh-2h", "periodic-24h"}, leaseIDs(), "fast lane should be served before the slow lane")
+}
+
+// A worker dedicated to the slow lane makes progress even while fast work is pending, which is what
+// lets the two classes be served by separately sized fleets.
+func TestScheduler_CompactionClassLanes_DedicatedWorker(t *testing.T) {
+	const hour = int64(time.Hour / time.Millisecond)
+
+	bkt := objstore.NewInMemBucket()
+	require.NoError(t, bkt.Upload(context.Background(), "tenant1/placeholder", strings.NewReader("")))
+
+	cfg := newTestSchedulerConfig()
+	cfg.LanePolicy.Policy = lanePolicyCompactionClass
+	scheduler, _ := newTestScheduler(t, bkt, cfg)
+	ctx := context.Background()
+
+	scheduler.rotator.Maintenance(ctx, false, true)
+	planResp, err := scheduler.LeaseJob(ctx, &compactorschedulerpb.LeaseJobRequest{WorkerId: "planner"})
+	require.NoError(t, err)
+	require.NotNil(t, planResp.Key)
+
+	_, err = scheduler.PlannedJobs(ctx, &compactorschedulerpb.PlannedJobsRequest{
+		Key:    planResp.Key,
+		Tenant: planResp.Spec.Tenant,
+		Jobs: []*compactorschedulerpb.PlannedCompactionJob{
+			{Id: "fresh-2h", Job: &compactorschedulerpb.CompactionJob{
+				BlockIds: [][]byte{[]byte("block-fast")}, TotalBlocksBytes: 100, MinTime: 0, MaxTime: 2 * hour,
+			}},
+			{Id: "periodic-24h", Job: &compactorschedulerpb.CompactionJob{
+				BlockIds: [][]byte{[]byte("block-slow")}, TotalBlocksBytes: 900, MinTime: 0, MaxTime: 24 * hour,
+			}},
+		},
+	})
+	require.NoError(t, err)
+
+	leaseClass := func(class compactorschedulerpb.CompactionClass) string {
+		resp, err := scheduler.LeaseJob(ctx, &compactorschedulerpb.LeaseJobRequest{
+			WorkerId: "worker",
+			LaneRequests: []*compactorschedulerpb.LaneRequest{
+				{JobType: compactorschedulerpb.JOB_TYPE_COMPACTION, CompactionClass: class},
+			},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, resp.Key)
+		return resp.Key.Id
+	}
+
+	// The fast job is still pending, so a shared worker would take it first.
+	require.Equal(t, "periodic-24h", leaseClass(compactorschedulerpb.COMPACTION_CLASS_SLOW))
+	require.Equal(t, "fresh-2h", leaseClass(compactorschedulerpb.COMPACTION_CLASS_FAST))
+}
+
 func newTestSchedulerConfig() Config {
 	var cfg Config
 	cfg.RegisterFlags(flag.NewFlagSet("test", flag.ContinueOnError))

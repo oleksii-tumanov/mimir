@@ -1054,6 +1054,8 @@
   "compactor-scheduler.bbolt.dir": "./data-compactor-scheduler",
   "compactor-scheduler.bbolt.shard-count": 16,
   "compactor-scheduler.lane-policy.policy": "simple",
+  "compactor-scheduler.lane-policy.compaction-class.fast-max-duration": 7200000000000,
+  "compactor-scheduler.lane-policy.compaction-class.out-of-order-class-fast": true,
   "store-gateway.sharding-ring.store": "memberlist",
   "store-gateway.sharding-ring.prefix": "collectors/",
   "store-gateway.sharding-ring.consul.hostname": "localhost:8500",

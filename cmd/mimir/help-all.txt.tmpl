@@ -1107,8 +1107,12 @@ Usage of ./cmd/mimir/mimir:
     	[experimental] The directory where bbolt shard database files are stored for the compactor scheduler. (default "./data-compactor-scheduler")
   -compactor-scheduler.bbolt.shard-count int
     	[experimental] The target number of bbolt database shards for the compactor scheduler. (default 16)
+  -compactor-scheduler.lane-policy.compaction-class.fast-max-duration duration
+    	[experimental] Compaction jobs whose source blocks span at most this duration are classified as fast. Jobs spanning longer are classified as slow. (default 2h0m0s)
+  -compactor-scheduler.lane-policy.compaction-class.out-of-order-class-fast
+    	[experimental] Classify out-of-order compaction jobs as fast regardless of the duration they span. Disable if out-of-order jobs for a tenant grow large enough to dominate the fast class. (default true)
   -compactor-scheduler.lane-policy.policy string
-    	[experimental] The lane policy the compactor scheduler should use. Valid values: simple (default "simple")
+    	[experimental] The lane policy the compactor scheduler should use. Valid values: simple, compaction-class (default "simple")
   -compactor-scheduler.lease-duration duration
     	[experimental] The duration of time without contact until the scheduler is able to lease a work item to another worker. (default 10m0s)
   -compactor-scheduler.maintenance-interval duration
@@ -1326,7 +1330,7 @@ Usage of ./cmd/mimir/mimir:
   -compactor.scheduler-client.grpc-client-config.tls-server-name string
     	Override the expected name on the server certificate.
   -compactor.scheduler-client.lanes comma-separated-list-of-strings
-    	[experimental] Lanes to request for each worker goroutine. Each entry is a '+'-separated list of job types in priority order. (default compact+plan,plan)
+    	[experimental] Lanes to request for each worker goroutine. Each entry is a '+'-separated list of job types in priority order. Valid job types: plan, compact, compact-fast, compact-slow. The compact-fast and compact-slow types only differ from compact when the scheduler separates compaction lanes by class. (default compact+plan,plan)
   -compactor.scheduler-client.leasing-max-backoff duration
     	[experimental] Maximum backoff time between scheduler job lease requests. (default 2m0s)
   -compactor.scheduler-client.leasing-min-backoff duration

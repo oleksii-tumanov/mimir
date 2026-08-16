@@ -290,6 +290,19 @@ compactor_scheduler:
     # CLI flag: -compactor-scheduler.lane-policy.policy
     [policy: <string> | default = "simple"]
 
+    compaction_class:
+      # (experimental) Compaction jobs whose source blocks span at most this
+      # duration are classified as fast. Jobs spanning longer are classified as
+      # slow.
+      # CLI flag: -compactor-scheduler.lane-policy.compaction-class.fast-max-duration
+      [fast_max_duration: <duration> | default = 2h]
+
+      # (experimental) Classify out-of-order compaction jobs as fast regardless
+      # of the duration they span. Disable if out-of-order jobs for a tenant
+      # grow large enough to dominate the fast class.
+      # CLI flag: -compactor-scheduler.lane-policy.compaction-class.out-of-order-class-fast
+      [out_of_order_class_fast: <boolean> | default = true]
+
 # The store_gateway block configures the store-gateway component.
 [store_gateway: <store_gateway>]
 
